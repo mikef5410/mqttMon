@@ -21,6 +21,10 @@ use Net::DBus::Reactor;
 use Try::Tiny;
 use JSON;
 use Data::Dumper qw(Dumper);
+use Config::Simple;
+use Net::Pushover;
+use WWW::PushBullet;
+
 use constant DAEMON     => 1;
 use constant DIM        => " 4 10 0";
 use constant BRIGHT     => " 0 0 0";
@@ -29,15 +33,27 @@ use constant SLOW_BLINK => " 20 2000 0";
 use constant RED        => "R";
 use constant YEL        => "Y";
 use constant GRN        => "G";
-my $runas         = "mikef";
-my $rungrp        = "users";
+
+my $globalConfig  = "/etc/mqttMon.conf";
 my $pidfile       = "/var/run/mqttMon/mqttMon.pid";
 my $stacklightSem = "/tmp/stacklight";
-my $mqttServer    = "hwlin1.sj.broadcom.com:1883";
-my $user          = "";
-my $pass          = "";
-my $session_Dbus  = undef;
+my %Config;
+
+if ( -f $globalConfig ) {
+  Config::Simple->import_from( $globalConfig, \%Config );
+} else {
+  die("Can't start, need config file $globalConfig");
+}
+
+my $runas        = $Config{runuser};
+my $rungrp       = $Config{rungroup};
+my $mqttServer   = $Config{mqttserver};
+my $user         = $Config{mqttuser};
+my $pass         = $Config{mqttpass};
+my $session_Dbus = undef;
 my $mqtt;
+my $pushover;
+my $pushbullet;
 
 if (DAEMON) {
   daemonize();
@@ -75,11 +91,19 @@ sub octohandler {
 SW: {
     if ( $topic eq "octoprint/event/PrinterStateChanged" ) {
       if ( $v->{state_id} eq "FINISHING" ) {
-        notify( "Print Finished", sprintf( "%s is done printing.", $v->{name} ), sprintf( "%s %s", GRN, BRIGHT ), 10 );
+        notify(
+          "Print Finished",
+          sprintf( "%s is done printing.", $v->{name} ),
+          sprintf( "%s %s", GRN, BRIGHT ), 10
+        );
         last SW;
       }
       if ( $v->{state_id} eq "PRINTING" ) {
-        notify( "Print Started", sprintf( "%s is printing.", $v->{name} ), sprintf( "%s %s", YEL, DIM ), 10 );
+        notify(
+          "Print Started",
+          sprintf( "%s is printing.", $v->{name} ),
+          sprintf( "%s %s", YEL, DIM ), 10
+        );
         last SW;
       }
       notify( "Printer state changed.", $v->{state_id}, "", 10 );
@@ -211,13 +235,38 @@ sub notify {
   }
 }
 
-#Logging stuff
+sub pushbulletSend {
+  my $title = shift;
+  my $text  = shift;
 
+  return if ( !length( $Config{pushbulletAPIkey} ) || !length( $Config{pushbulletDeviceID} ) );
+  if ( !defined($pushbullet) ) {
+    $pushbullet = WWW::PushBullet->new( apikey => $Config{pushbulletAPIkey} );
+  }
+
+  my $deviceID = $Config{pushbulletDeviceID};
+  $pushbullet->push_note( { device_iden => $deviceID, title => $title, body => $text } );
+}
+
+sub pushoverSend {
+  my $title = shift;
+  my $text  = shift;
+  my $html  = shift || 0;
+
+  return if ( !length( $Config{pushoverToken} ) || !length( $Config{pushoverUser} ) );
+  if ( !defined($pushover) ) {
+    $pushover =
+      Net::Pushover->new( token => $Config{pushoverToken}, user => $Config{pushoverUser} );
+  }
+  $pushover->message( title => $title, text => $text, html => $html );
+}
+
+#Logging stuff
 sub Info {
   my $format = shift;
   my @args   = @_;
 
-  syslog(  "info|local0" , $format, @args );
+  syslog( "info|local0", $format, @args );
   return ();
 }
 
