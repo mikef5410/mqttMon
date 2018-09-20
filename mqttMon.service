@@ -1,0 +1,14 @@
+[Unit]
+Description=Monitor mqtt server and notify
+After=network-online.target
+After=stacklightd.service
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/mqttMon
+PIDFile=/var/run/mqttMon/mqttMon.pid
+RestartSec=5
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

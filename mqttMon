@@ -1,0 +1,210 @@
+#!/usr/bin/perl
+#
+# Watch MQTT, notify me of interesting events. It'll put notifications on screen, as well as light the
+# stacklight, as desired.
+#
+# Starts as root, drops privs to 'runas'. Needs to run as the desktop user or session dbus won't work.
+#
+use strict;
+use EV;
+use Coro;
+use File::Basename qw(dirname basename);
+use File::Path qw(make_path);
+use Proc::Daemon;
+use Proc::PID::File;
+use Sys::Syslog;
+use Time::HiRes;
+use Net::MQTT::Simple;
+use Net::MQTT::Simple::Auth;
+use Net::DBus;
+use Net::DBus::Reactor;
+use Try::Tiny;
+use JSON;
+use Data::Dumper qw(Dumper);
+use constant DAEMON     => 1;
+use constant DIM        => " 1 10 0";
+use constant BRIGHT     => " 0 0 0";
+use constant FAST_BLINK => " 20 300 0";
+use constant SLOW_BLINK => " 20 2000 0";
+use constant RED        => "R";
+use constant YEL        => "Y";
+use constant GRN        => "G";
+my $runas         = "mikef";
+my $rungrp        = "users";
+my $pidfile       = "/var/run/mqttMon/mqttMon.pid";
+my $stacklightSem = "/tmp/stacklight";
+my $mqttServer    = "hwlin1.sj.broadcom.com:1883";
+my $user          = "";
+my $pass          = "";
+my $session_Dbus  = undef;
+my $mqtt;
+
+if (DAEMON) {
+  daemonize();
+}
+## Setup MQTT connection
+if ( length($user) && length($pass) ) {
+  $mqtt = Net::MQTT::Simple::Auth->new( $mqttServer, $user, $pass );
+} else {
+  $mqtt = Net::MQTT::Simple->new($mqttServer);
+}
+
+# Define the topics to monitor and how to handle them...
+my @subs = ( "octoprint/#" => \&octohandler, );
+
+# Subscribe and run
+$mqtt->subscribe(@subs);
+$mqtt->run();
+exit;
+
+#Handle topics from the octoprint/# tree ....
+sub octohandler {
+  my $topic = shift;
+  my $val   = shift;
+  my $json  = JSON->new->allow_nonref;
+  my $v;
+  try {
+    $v = $json->decode($val);
+  }
+  catch {
+  };
+SW: {
+    if ( $topic eq "octoprint/event/PrinterStateChanged" ) {
+      if ( $v->{state_id} eq "FINISHING" ) {
+        notify(
+          "Print Finished",
+          sprintf( "%s is done printing.", $v->{name} ),
+          sprintf( "%s %s", GRN, BRIGHT ), 10
+        );
+        last SW;
+      }
+      if ( $v->{state_id} eq "PRINTING" ) {
+        notify(
+          "Print Started",
+          sprintf( "%s is printing.", $v->{name} ),
+          sprintf( "%s %s", YEL, DIM ), 10
+        );
+        last SW;
+      }
+      notify( "Printer state changed.", $v->{state_id}, "", 10 );
+      last SW;
+    }
+    if ( $topic eq "octoprint/event/ClientOpened" ) {
+      notify( "Client connect to printer", $v->{remoteAddress}, "", 10 );
+      last SW;
+    }
+    if ( $topic eq "octoprint/event/ClientClosed" ) {
+      notify( "Client disconnect from printer", $v->{remoteAddress}, "", 10 );
+      last SW;
+    }
+    if ( $topic eq "octoprint/temperature/bed" ) {
+      last SW;
+    }
+  }
+}
+
+# Fork, exec, drop privs and setpgrp to become a daemon. This program is meant to start life
+# as root, started by systemd
+sub daemonize {
+  #Daemonize, make sure we've got a writable directory for the pid file....
+  if ( !-d dirname($pidfile) ) {
+    make_path( dirname($pidfile) );
+  }
+  chown( scalar( getpwnam($runas) ), scalar( getgrnam($rungrp) ), dirname($pidfile) );
+  chmod( 0777, dirname($pidfile) );
+
+  # If already running, then exit (/var/run/basename($0).pid)
+  if ( Proc::PID::File->running( dir => dirname($pidfile) ) ) {
+    exit(0);
+  }
+  Proc::Daemon::Init(
+    {
+      setuid   => scalar( getpwnam($runas) ),
+      setgid   => scalar( getgrnam($rungrp) ),
+      pid_file => $pidfile
+    }
+  );
+}
+
+#Find the session bus for logged in user.
+# returns (-1,-1) if not found, otherwise it returns (uid,bus_address)
+sub find_session_bus {
+  my $user;
+  my $pid;
+  my $busaddr;
+  open( PS, "ps -ef |" );
+  while (<PS>) {
+    if (/dbus-daemon.+--session/) {
+      my (@parms) = split(" ");
+      $user = $parms[0];
+      $pid  = $parms[1];
+      last;
+    }
+  }
+  return ( -1, -1 ) if ( !length($user) );
+  close(PS);
+  open( ENV, "/proc/$pid/environ" );
+  my $env = <ENV>;
+  close(ENV);
+  my @vars = split( "\000", $env );
+
+  #print(join("\n",@vars));
+  foreach my $var (@vars) {
+    if ( $var =~ /DBUS_SESSION_BUS_ADDRESS=/ ) {
+      $busaddr = substr( $var, 25 );
+      last;
+    }
+  }
+  return ( scalar( getpwnam($user) ), $busaddr );
+}
+
+#Check to see if the session bus is still alive
+sub check_session_bus {
+  if ( defined($session_Dbus) ) {
+    try {
+      my $obj  = $session_Dbus->get_bus_object()->get_child_object("Peer");
+      my $rval = $obj->Ping();
+      return (0);    #OK
+    }
+    catch {
+      return (1);    #Not there
+    };
+  }
+  return (1);
+}
+
+sub get_session_bus {
+  if ( check_session_bus() ) {
+    $session_Dbus = undef;
+    my ( $uid, $busaddr ) = find_session_bus();
+    if ( length($busaddr) ) {
+      try {
+        $session_Dbus = Net::DBus->new($busaddr);
+      }
+      catch {
+        $session_Dbus = undef;
+      };
+    }
+  }
+  return ($session_Dbus);
+}
+
+sub notify {
+  my $summary = shift;
+  my $body    = shift;
+  my $light   = shift;
+  my $timeout = shift;
+  my $notifyID;
+  my $bus = get_session_bus();
+  if ( defined($bus) ) {
+    my $svc = $bus->get_service("org.freedesktop.Notifications");
+    my $obj = $svc->get_object("/org/freedesktop/Notifications");
+    $notifyID = $obj->Notify( "mqttMon", 0, "", $summary, $body, [], {}, 1000 * $timeout );
+  }
+  if ( length($light) ) {
+    open( STACKLIGHT, ">$stacklightSem" );
+    print( STACKLIGHT "$light", "\n" );
+    close(STACKLIGHT);
+  }
+}
+

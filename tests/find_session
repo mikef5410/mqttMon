@@ -1,0 +1,68 @@
+#!/usr/bin/perl
+#
+use Net::DBus;
+use Net::DBus::Reactor;
+use Data::Dumper qw(Dumper);
+open( PS, "ps -ef |" );
+while (<PS>) {
+  if (/dbus-daemon.*--session/) {
+    my (@parms) = split(" ");
+    $user = $parms[0];
+    $pid  = $parms[1];
+    last;
+  }
+}
+close(PS);
+open( ENV, "/proc/$pid/environ" );
+my $env = <ENV>;
+close(ENV);
+my @vars = split( "\000", $env );
+
+#print(join("\n",@vars));
+foreach my $var (@vars) {
+  if ( $var =~ /DBUS_SESSION_BUS_ADDRESS=/ ) {
+    $busaddr = substr( $var, 25 );
+    last;
+  }
+}
+printf("User: $user, Bus addr: $busaddr\n");
+
+#Gotta become the user to put something on screen....
+my $uid = getpwnam($user);
+$> = $uid;
+
+#Now test it
+my $bus = Net::DBus->new($busaddr);
+check_session_bus();
+my $svc         = $bus->get_service("org.freedesktop.Notifications");
+my $obj         = $svc->get_object("/org/freedesktop/Notifications");
+my $urgency     = 1;
+my $icon        = "";
+my $id          = 0;
+my $summary     = "Worked!";
+my $body        = "The test worked";
+my $application = "notify";
+my $timeout     = 0;                                                                             #ms
+my $rval        = $obj->Notify( $application, $id, $icon, $summary, $body, [], {}, $timeout );
+print("$rval\n");
+$obj->connect_to_signal( 'NotificationClosed', \&closedSignal );
+my $reactor = Net::DBus::Reactor->main();
+$reactor->run();
+
+sub closedSignal {
+  my $id     = shift;    # id that was returned by Notify()
+  my $reason = shift;    #1 - timed out, 2-clicked, 3-closed by CloseNotification, 4-undefined
+  print("Closed: $id, $reason\n");
+  exit;
+}
+
+sub check_session_bus {
+  if ( defined($bus) ) {
+    my $obj = $bus->get_bus_object;
+    $obj = $obj->get_child_object("Peer");
+
+    #print(Dumper($obj));
+    my $rval = $obj->Ping();
+    print($rval);
+  }
+}
