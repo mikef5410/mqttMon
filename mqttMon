@@ -37,19 +37,19 @@ use constant GRN        => "G";
 my $globalConfig  = "/etc/mqttMon.conf";
 my $pidfile       = "/var/run/mqttMon/mqttMon.pid";
 my $stacklightSem = "/tmp/stacklight";
-my %Config;
+my $cfg;
 
 if ( -f $globalConfig ) {
-  Config::Simple->import_from( $globalConfig, \%Config );
+  $cfg = Config::Simple->new( $globalConfig);
 } else {
   die("Can't start, need config file $globalConfig");
 }
 
-my $runas        = $Config{runuser};
-my $rungrp       = $Config{rungroup};
-my $mqttServer   = $Config{mqttserver};
-my $user         = $Config{mqttuser};
-my $pass         = $Config{mqttpass};
+my $runas        = $cfg->param("runuser");
+my $rungrp       = $cfg->param("rungroup");
+my $mqttServer   = $cfg->param("mqttserver");
+my $user         = $cfg->param("mqttuser");
+my $pass         = $cfg->param("mqttpass");
 my $session_Dbus = undef;
 my $mqtt;
 my $pushover;
@@ -61,7 +61,7 @@ if (DAEMON) {
 
 openlog( "mqttMon", "", "local0" );
 Info("mqttMon started.");
-
+Info("mqtt server: $mqttServer, Run as: $runas");
 ## Setup MQTT connection
 if ( length($user) && length($pass) ) {
   $mqtt = Net::MQTT::Simple::Auth->new( $mqttServer, $user, $pass );
@@ -239,12 +239,12 @@ sub pushbulletSend {
   my $title = shift;
   my $text  = shift;
 
-  return if ( !length( $Config{pushbulletAPIkey} ) || !length( $Config{pushbulletDeviceID} ) );
+  return if ( !length( $cfg->param("pushbulletAPIkey") ) || !length( $cfg->param("pushbulletDeviceID") ) );
   if ( !defined($pushbullet) ) {
-    $pushbullet = WWW::PushBullet->new( apikey => $Config{pushbulletAPIkey} );
+    $pushbullet = WWW::PushBullet->new( apikey => $cfg->param("pushbulletAPIkey") );
   }
 
-  my $deviceID = $Config{pushbulletDeviceID};
+  my $deviceID = $cfg->param("pushbulletDeviceID");
   $pushbullet->push_note( { device_iden => $deviceID, title => $title, body => $text } );
 }
 
@@ -253,10 +253,10 @@ sub pushoverSend {
   my $text  = shift;
   my $html  = shift || 0;
 
-  return if ( !length( $Config{pushoverToken} ) || !length( $Config{pushoverUser} ) );
+  return if ( !length( $cfg->param("pushoverToken") ) || !length( $cfg->param("pushoverUser") ) );
   if ( !defined($pushover) ) {
     $pushover =
-      Net::Pushover->new( token => $Config{pushoverToken}, user => $Config{pushoverUser} );
+      Net::Pushover->new( token => $cfg->param("pushoverToken"), user => $cfg->param("pushoverUser") );
   }
   $pushover->message( title => $title, text => $text, html => $html );
 }
