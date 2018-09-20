@@ -12,7 +12,7 @@ use File::Basename qw(dirname basename);
 use File::Path qw(make_path);
 use Proc::Daemon;
 use Proc::PID::File;
-use Sys::Syslog;
+use Sys::Syslog qw(:standard :macros);
 use Time::HiRes;
 use Net::MQTT::Simple;
 use Net::MQTT::Simple::Auth;
@@ -42,6 +42,10 @@ my $mqtt;
 if (DAEMON) {
   daemonize();
 }
+
+openlog( "mqttMon", "", "local0" );
+Info("mqttMon started.");
+
 ## Setup MQTT connection
 if ( length($user) && length($pass) ) {
   $mqtt = Net::MQTT::Simple::Auth->new( $mqttServer, $user, $pass );
@@ -71,19 +75,11 @@ sub octohandler {
 SW: {
     if ( $topic eq "octoprint/event/PrinterStateChanged" ) {
       if ( $v->{state_id} eq "FINISHING" ) {
-        notify(
-          "Print Finished",
-          sprintf( "%s is done printing.", $v->{name} ),
-          sprintf( "%s %s", GRN, BRIGHT ), 10
-        );
+        notify( "Print Finished", sprintf( "%s is done printing.", $v->{name} ), sprintf( "%s %s", GRN, BRIGHT ), 10 );
         last SW;
       }
       if ( $v->{state_id} eq "PRINTING" ) {
-        notify(
-          "Print Started",
-          sprintf( "%s is printing.", $v->{name} ),
-          sprintf( "%s %s", YEL, DIM ), 10
-        );
+        notify( "Print Started", sprintf( "%s is printing.", $v->{name} ), sprintf( "%s %s", YEL, DIM ), 10 );
         last SW;
       }
       notify( "Printer state changed.", $v->{state_id}, "", 10 );
@@ -97,15 +93,19 @@ SW: {
       notify( "Client disconnect from printer", $v->{remoteAddress}, "", 10 );
       last SW;
     }
-    if ( $topic eq "octoprint/temperature/bed" ) {
+    if ( $topic =~ "octoprint/temperature/" ) {
       last SW;
     }
+
+    #Default
+    Info("$topic - $val");    #Log it
   }
 }
 
 # Fork, exec, drop privs and setpgrp to become a daemon. This program is meant to start life
 # as root, started by systemd
 sub daemonize {
+
   #Daemonize, make sure we've got a writable directory for the pid file....
   if ( !-d dirname($pidfile) ) {
     make_path( dirname($pidfile) );
@@ -195,6 +195,9 @@ sub notify {
   my $light   = shift;
   my $timeout = shift;
   my $notifyID;
+
+  Info("$summary - $body");    #Log it.
+
   my $bus = get_session_bus();
   if ( defined($bus) ) {
     my $svc = $bus->get_service("org.freedesktop.Notifications");
@@ -208,3 +211,28 @@ sub notify {
   }
 }
 
+#Logging stuff
+
+sub Info {
+  my $format = shift;
+  my @args   = @_;
+
+  syslog(  "info|local0" , $format, @args );
+  return ();
+}
+
+sub Warn {
+  my $format = shift;
+  my @args   = @_;
+
+  syslog( "warn|local0", $format, @args );
+  return ();
+}
+
+sub Err {
+  my $format = shift;
+  my @args   = @_;
+
+  syslog( "err|log", $format, @args );
+  return ();
+}
