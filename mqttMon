@@ -22,7 +22,7 @@ use Try::Tiny;
 use JSON;
 use Data::Dumper qw(Dumper);
 use constant DAEMON     => 1;
-use constant DIM        => " 1 10 0";
+use constant DIM        => " 4 10 0";
 use constant BRIGHT     => " 0 0 0";
 use constant FAST_BLINK => " 20 300 0";
 use constant SLOW_BLINK => " 20 2000 0";
