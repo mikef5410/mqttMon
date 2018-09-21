@@ -102,7 +102,7 @@ SW: {
         notify(
           "Print Started",
           sprintf( "%s is printing.", $v->{name} ),
-          sprintf( "%s %s", YEL, DIM ), 10
+          sprintf( "%s %s", YEL, BRIGHT ), 10
         );
         last SW;
       }
