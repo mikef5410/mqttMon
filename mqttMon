@@ -229,6 +229,7 @@ sub notify {
     $notifyID = $obj->Notify( "mqttMon", 0, "", $summary, $body, [], {}, 1000 * $timeout );
   }
   if ( length($light) ) {
+    unlink($stacklightSem);
     open( STACKLIGHT, ">$stacklightSem" );
     print( STACKLIGHT "$light", "\n" );
     close(STACKLIGHT);
