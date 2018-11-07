@@ -40,7 +40,7 @@ my $stacklightSem = "/tmp/stacklight";
 my $cfg;
 
 if ( -f $globalConfig ) {
-  $cfg = Config::Simple->new( $globalConfig);
+  $cfg = Config::Simple->new($globalConfig);
 } else {
   die("Can't start, need config file $globalConfig");
 }
@@ -91,19 +91,11 @@ sub octohandler {
 SW: {
     if ( $topic eq "octoprint/event/PrinterStateChanged" ) {
       if ( $v->{state_id} eq "FINISHING" ) {
-        notify(
-          "Print Finished",
-          sprintf( "%s is done printing.", $v->{name} ),
-          sprintf( "%s %s", GRN, BRIGHT ), 10
-        );
+        notify( "Print Finished", sprintf( "%s is done printing.", $v->{name} ), sprintf( "%s %s", GRN, BRIGHT ), 10 );
         last SW;
       }
       if ( $v->{state_id} eq "PRINTING" ) {
-        notify(
-          "Print Started",
-          sprintf( "%s is printing.", $v->{name} ),
-          sprintf( "%s %s", YEL, BRIGHT ), 10
-        );
+        notify( "Print Started", sprintf( "%s is printing.", $v->{name} ), sprintf( "%s %s", YEL, BRIGHT ), 10 );
         last SW;
       }
       notify( "Printer state changed.", $v->{state_id}, "", 10 );
@@ -118,6 +110,10 @@ SW: {
       last SW;
     }
     if ( $topic =~ "octoprint/temperature/" ) {
+      last SW;
+    }
+    if ( $topic =~ "serdesBench/" ) {
+      handleSerdes( $topic, $val );
       last SW;
     }
 
@@ -285,4 +281,25 @@ sub Err {
 
   syslog( "err|log", $format, @args );
   return ();
+}
+
+sub handleSerdes {
+  my $topic = shift;
+  my $msg   = shift;
+
+  if ( $topic =~ /status/ ) {    #presense message
+    if ( $msg =~ /Done/ ) {
+      notify( $topic, $msg, sprintf( "%s %s", GRN, BRIGHT ), 7200 );
+      return;
+    }
+    notify( $topic, $msg, "Y 2 2000 0", 7200 );
+  }
+
+  if ( $topic =~ /message/ ) {    #notification message
+    if ( $msg =~ /abort|retry|stop/i ) {
+      notify( $topic, $msg, sprintf( "%s %s", RED, SLOW_BLINK ), 6000 );
+      return;
+    }
+    notify( $topic, $msg, sprintf( "%s %s", GRN, BRIGHT ), 7200 );
+  }
 }
