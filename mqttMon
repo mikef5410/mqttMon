@@ -70,7 +70,9 @@ if ( length($user) && length($pass) ) {
 }
 
 # Define the topics to monitor and how to handle them...
-my @subs = ( "octoprint/#" => \&octohandler, );
+my @subs = ( "octoprint/#" => \&octohandler,
+             "serdesBench/#" => \&serdeshandler,
+           );
 
 # Subscribe and run
 $mqtt->subscribe(@subs);
@@ -88,6 +90,7 @@ sub octohandler {
   }
   catch {
   };
+
 SW: {
     if ( $topic eq "octoprint/event/PrinterStateChanged" ) {
       if ( $v->{state_id} eq "FINISHING" ) {
@@ -109,11 +112,30 @@ SW: {
       notify( "Client disconnect from printer", $v->{remoteAddress}, "", 10 );
       last SW;
     }
-    if ( $topic =~ "octoprint/temperature/" ) {
+    if ( $topic =~m|octoprint/temperature/| ) {
       last SW;
     }
-    if ( $topic =~ "serdesBench/" ) {
-      handleSerdes( $topic, $val );
+
+    #Default
+    Info("$topic - $val");    #Log it
+  }
+}
+
+#Handle topics from the serdesBench/# tree ....
+sub serdeshandler {
+  my $topic = shift;
+  my $val   = shift;
+  my $json  = JSON->new->allow_nonref;
+  my $v;
+  try {
+    $v = $json->decode($val);
+  }
+  catch {
+  };
+
+SW: {
+    if ( $topic =~m|serdesBench/| ) {
+      doSerdes( $topic, $val );
       last SW;
     }
 
@@ -283,11 +305,13 @@ sub Err {
   return ();
 }
 
-sub handleSerdes {
+sub doSerdes {
   my $topic = shift;
   my $msg   = shift;
 
-  if ( $topic =~ /status/ ) {    #presense message
+  my ($top,$bench,$action)=split('/',$topic);
+  print("$top -- $bench -- $action\n");
+  if ( $action eq "status" ) {    #presense message
     if ( $msg =~ /Done/ ) {
       notify( $topic, $msg, sprintf( "%s %s", GRN, BRIGHT ), 7200 );
       return;
@@ -295,7 +319,7 @@ sub handleSerdes {
     notify( $topic, $msg, "Y 2 2000 0", 7200 );
   }
 
-  if ( $topic =~ /message/ ) {    #notification message
+  if ( $action eq "message" ) {    #notification message
     if ( $msg =~ /abort|retry|stop/i ) {
       notify( $topic, $msg, sprintf( "%s %s", RED, SLOW_BLINK ), 6000 );
       return;
