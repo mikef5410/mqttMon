@@ -23,8 +23,12 @@ use JSON;
 use Data::Dumper qw(Dumper);
 use Config::Simple;
 use Net::Pushover;
-use WWW::PushBullet;
 
+#use WWW::PushBullet;
+use Net::SMTP;
+use Email::Sender::Simple qw(sendmail);
+use Email::Simple;
+use Email::Simple::Creator;
 use constant DAEMON     => 1;
 use constant DIM        => " 4 10 0";
 use constant BRIGHT     => " 0 0 0";
@@ -33,18 +37,16 @@ use constant SLOW_BLINK => " 20 2000 0";
 use constant RED        => "R";
 use constant YEL        => "Y";
 use constant GRN        => "G";
+my $globalConfig = "/etc/mqttMon.conf";
+my $pidfile      = "/var/run/mqttMon/mqttMon.pid";
 
-my $globalConfig  = "/etc/mqttMon.conf";
-my $pidfile       = "/var/run/mqttMon/mqttMon.pid";
-my $stacklightSem = "/tmp/stacklight";
+#my $stacklightSem = "/tmp/stacklight";
 my $cfg;
-
 if ( -f $globalConfig ) {
   $cfg = Config::Simple->new($globalConfig);
 } else {
   die("Can't start, need config file $globalConfig");
 }
-
 my $runas        = $cfg->param("runuser");
 my $rungrp       = $cfg->param("rungroup");
 my $mqttServer   = $cfg->param("mqttserver");
@@ -54,11 +56,13 @@ my $session_Dbus = undef;
 my $mqtt;
 my $pushover;
 my $pushbullet;
+my $lastGridStateNotification = 0;
+my $currLightState            = 0;
 
 if (DAEMON) {
   daemonize();
 }
-
+my $gridNotifications = [ '7077999733@txt.att.net', '7077999734@txt.att.net', '7075375852@txt.att.net' ];
 openlog( "mqttMon", "", "local0" );
 Info("mqttMon started.");
 Info("mqtt server: $mqttServer, Run as: $runas");
@@ -70,7 +74,9 @@ if ( length($user) && length($pass) ) {
 }
 
 # Define the topics to monitor and how to handle them...
-my @subs = ( "octoprint/#" => \&octohandler, );
+my @subs = (    #"octoprint/#" => \&octohandler,
+  "gates5410/energy/#" => \&energyhandler
+);
 
 # Subscribe and run
 $mqtt->subscribe(@subs);
@@ -85,8 +91,7 @@ sub octohandler {
   my $v;
   try {
     $v = $json->decode($val);
-  }
-  catch {
+  } catch {
   };
 SW: {
     if ( $topic eq "octoprint/event/PrinterStateChanged" ) {
@@ -112,13 +117,40 @@ SW: {
     if ( $topic =~ "octoprint/temperature/" ) {
       last SW;
     }
-    if ( $topic =~ "serdesBench/" ) {
-      handleSerdes( $topic, $val );
-      last SW;
-    }
 
+    #    if ( $topic =~ "serdesBench/" ) {
+    #      handleSerdes( $topic, $val );
+    #      last SW;
+    #    }
     #Default
     Info("$topic - $val");    #Log it
+  }
+}
+
+sub energyhandler {
+  my $topic = shift;
+  my $val   = shift;
+SW: {
+    if ( $topic eq "gates5410/energy/grid/up" ) {
+      if ( $val eq "true" ) {
+        if ( $currLightState == 1 ) {
+          notify( "PG&E Grid Restored", "Grid is restored", "", 300, $gridNotifications );
+          $lastGridStateNotification = 0;
+        }
+        light_off();
+      } else {
+        if ( ( time - $lastGridStateNotification ) > ( 6 * 60 * 60 ) ) {    #every 6 hrs, re-notify
+          $lastGridStateNotification = time;
+          $currLightState            = 0;
+          light_on();
+          notify( "PG&E Grid Offline", "Grid is offline", "", 300, $gridNotifications );
+        }
+      }
+    }
+    if ( $topic eq "gates5410/energy/battery/status" ) {
+
+      # $val could be STANDBY CHARGE DISCHARGE VOLUNTARY_DISCHARGE
+    }
   }
 }
 
@@ -185,8 +217,7 @@ sub check_session_bus {
       my $obj  = $session_Dbus->get_bus_object()->get_child_object("Peer");
       my $rval = $obj->Ping();
       return (0);    #OK
-    }
-    catch {
+    } catch {
       return (1);    #Not there
     };
   }
@@ -200,8 +231,7 @@ sub get_session_bus {
     if ( length($busaddr) ) {
       try {
         $session_Dbus = Net::DBus->new($busaddr);
-      }
-      catch {
+      } catch {
         $session_Dbus = undef;
       };
     }
@@ -210,37 +240,39 @@ sub get_session_bus {
 }
 
 sub notify {
-  my $summary = shift;
-  my $body    = shift;
-  my $light   = shift;
-  my $timeout = shift;
+  my $summary       = shift;
+  my $body          = shift;
+  my $light         = shift;
+  my $timeout       = shift;
+  my $notifications = shift;
   my $notifyID;
-
   Info("$summary - $body");    #Log it.
 
-  my $bus = get_session_bus();
-  if ( defined($bus) ) {
-    my $svc = $bus->get_service("org.freedesktop.Notifications");
-    my $obj = $svc->get_object("/org/freedesktop/Notifications");
-    $notifyID = $obj->Notify( "mqttMon", 0, "", $summary, $body, [], {}, 1000 * $timeout );
-  }
-  if ( length($light) ) {
-    unlink($stacklightSem);
-    open( STACKLIGHT, ">$stacklightSem" );
-    print( STACKLIGHT "$light", "\n" );
-    close(STACKLIGHT);
-  }
+  #  pushbulletSend($summary, $body);
+  pushoverSend( $summary, $body );
+  sendEmail( $summary, $body, $notifications );
+
+  #  my $bus = get_session_bus();
+  #  if ( defined($bus) ) {
+  #    my $svc = $bus->get_service("org.freedesktop.Notifications");
+  #    my $obj = $svc->get_object("/org/freedesktop/Notifications");
+  #    $notifyID = $obj->Notify( "mqttMon", 0, "", $summary, $body, [], {}, 1000 * $timeout );
+  #  }
+  #  if ( length($light) ) {
+  #    unlink($stacklightSem);
+  #    open( STACKLIGHT, ">$stacklightSem" );
+  #    print( STACKLIGHT "$light", "\n" );
+  #    close(STACKLIGHT);
+  #  }
 }
 
 sub pushbulletSend {
   my $title = shift;
   my $text  = shift;
-
   return if ( !length( $cfg->param("pushbulletAPIkey") ) || !length( $cfg->param("pushbulletDeviceID") ) );
   if ( !defined($pushbullet) ) {
     $pushbullet = WWW::PushBullet->new( apikey => $cfg->param("pushbulletAPIkey") );
   }
-
   my $deviceID = $cfg->param("pushbulletDeviceID");
   $pushbullet->push_note( { device_iden => $deviceID, title => $title, body => $text } );
 }
@@ -249,7 +281,6 @@ sub pushoverSend {
   my $title = shift;
   my $text  = shift;
   my $html  = shift || 0;
-
   return if ( !length( $cfg->param("pushoverToken") ) || !length( $cfg->param("pushoverUser") ) );
   if ( !defined($pushover) ) {
     $pushover =
@@ -262,7 +293,6 @@ sub pushoverSend {
 sub Info {
   my $format = shift;
   my @args   = @_;
-
   syslog( "info|local0", $format, @args );
   return ();
 }
@@ -270,7 +300,6 @@ sub Info {
 sub Warn {
   my $format = shift;
   my @args   = @_;
-
   syslog( "warn|local0", $format, @args );
   return ();
 }
@@ -278,7 +307,6 @@ sub Warn {
 sub Err {
   my $format = shift;
   my @args   = @_;
-
   syslog( "err|log", $format, @args );
   return ();
 }
@@ -286,7 +314,6 @@ sub Err {
 sub handleSerdes {
   my $topic = shift;
   my $msg   = shift;
-
   if ( $topic =~ /status/ ) {    #presense message
     if ( $msg =~ /Done/ ) {
       notify( $topic, $msg, sprintf( "%s %s", GRN, BRIGHT ), 7200 );
@@ -294,7 +321,6 @@ sub handleSerdes {
     }
     notify( $topic, $msg, "Y 2 2000 0", 7200 );
   }
-
   if ( $topic =~ /message/ ) {    #notification message
     if ( $msg =~ /abort|retry|stop/i ) {
       notify( $topic, $msg, sprintf( "%s %s", RED, SLOW_BLINK ), 6000 );
@@ -302,4 +328,39 @@ sub handleSerdes {
     }
     notify( $topic, $msg, sprintf( "%s %s", GRN, BRIGHT ), 7200 );
   }
+}
+
+sub light_on {
+  if ( $currLightState == 0 ) {
+    system("/usr/local/bin/signalLight p");
+  }
+  $currLightState = 1;
+}
+
+sub light_off {
+  if ( $currLightState == 1 ) {
+    system("/usr/local/bin/signalLight");
+  }
+  $currLightState = 0;
+}
+
+sub sendEmail {
+  my $subject    = shift;
+  my $body       = shift;
+  my $recipients = shift;
+  my $message    = Email::Simple->create(
+    header => [
+      From    => '"Powerwall monitor" <mqttMon@mrf.sonoma.ca.us>',
+      Subject => $subject,
+    ],
+    body => $body
+  );
+  if ( ref($recipients) ) {
+    $message->header_set( "To", join( ", ", @$recipients ) );
+  } else {
+    $message->header_set( "To", $recipients );
+  }
+  sendmail($message);
+
+  #  print $message->as_string;
 }
