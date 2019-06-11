@@ -114,14 +114,10 @@ SW: {
       notify( "Client disconnect from printer", $v->{remoteAddress}, "", 10 );
       last SW;
     }
-    if ( $topic =~ "octoprint/temperature/" ) {
+    if ( $topic =~ m|octoprint/temperature/| ) {
       last SW;
     }
 
-    #    if ( $topic =~ "serdesBench/" ) {
-    #      handleSerdes( $topic, $val );
-    #      last SW;
-    #    }
     #Default
     Info("$topic - $val");    #Log it
   }
@@ -309,25 +305,6 @@ sub Err {
   my @args   = @_;
   syslog( "err|log", $format, @args );
   return ();
-}
-
-sub handleSerdes {
-  my $topic = shift;
-  my $msg   = shift;
-  if ( $topic =~ /status/ ) {    #presense message
-    if ( $msg =~ /Done/ ) {
-      notify( $topic, $msg, sprintf( "%s %s", GRN, BRIGHT ), 7200 );
-      return;
-    }
-    notify( $topic, $msg, "Y 2 2000 0", 7200 );
-  }
-  if ( $topic =~ /message/ ) {    #notification message
-    if ( $msg =~ /abort|retry|stop/i ) {
-      notify( $topic, $msg, sprintf( "%s %s", RED, SLOW_BLINK ), 6000 );
-      return;
-    }
-    notify( $topic, $msg, sprintf( "%s %s", GRN, BRIGHT ), 7200 );
-  }
 }
 
 sub light_on {
