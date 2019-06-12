@@ -130,15 +130,17 @@ SW: {
     if ( $topic eq "gates5410/energy/grid/up" ) {
       if ( $val eq "true" ) {
         if ( $currLightState == 1 ) {
+          light_off();
+          $currLightState = 0;
           notify( "PG&E Grid Restored", "Grid is restored", "", 300, $gridNotifications );
           $lastGridStateNotification = 0;
         }
-        light_off();
       } else {
         if ( ( time - $lastGridStateNotification ) > ( 6 * 60 * 60 ) ) {    #every 6 hrs, re-notify
           $lastGridStateNotification = time;
           $currLightState            = 0;
           light_on();
+          $currLightState = 1;
           notify( "PG&E Grid Offline", "Grid is offline", "", 300, $gridNotifications );
         }
       }
@@ -308,17 +310,13 @@ sub Err {
 }
 
 sub light_on {
-  if ( $currLightState == 0 ) {
-    system("/usr/local/bin/signalLight p");
-  }
-  $currLightState = 1;
+  system("/usr/local/bin/signalLight 1 p");
+  system("/usr/local/bin/signalLight 2 p");
 }
 
 sub light_off {
-  if ( $currLightState == 1 ) {
-    system("/usr/local/bin/signalLight");
-  }
-  $currLightState = 0;
+  system("/usr/local/bin/signalLight 1");
+  system("/usr/local/bin/signalLight 2");
 }
 
 sub sendEmail {
