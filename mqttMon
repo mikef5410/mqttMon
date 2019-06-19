@@ -62,7 +62,7 @@ my $currLightState            = 0;
 if (DAEMON) {
   daemonize();
 }
-my $gridNotifications = [ '7077999733@txt.att.net', '7077999734@txt.att.net', '7075375852@txt.att.net' ];
+my $gridNotifications = [ '7077999733@msg.fi.google.com', '7077999734@msg.fi.google.com', '7075375852@txt.att.net' ];
 openlog( "mqttMon", "", "local0" );
 Info("mqttMon started.");
 Info("mqtt server: $mqttServer, Run as: $runas");
