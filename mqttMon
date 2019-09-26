@@ -66,7 +66,9 @@ my $gridNotifications = [ '7077999733@msg.fi.google.com', '7077999734@msg.fi.goo
 openlog( "mqttMon", "", "local0" );
 Info("mqttMon started.");
 Info("mqtt server: $mqttServer, Run as: $runas");
+
 ## Setup MQTT connection
+#$Net::MQTT::Simple::PROTOCOL_LEVEL=0x05;
 if ( length($user) && length($pass) ) {
   $mqtt = Net::MQTT::Simple::Auth->new( $mqttServer, $user, $pass );
 } else {
@@ -126,6 +128,7 @@ SW: {
 sub energyhandler {
   my $topic = shift;
   my $val   = shift;
+
 SW: {
     if ( $topic eq "gates5410/energy/grid/up" ) {
       if ( $val eq "true" ) {
@@ -305,7 +308,7 @@ sub Warn {
 sub Err {
   my $format = shift;
   my @args   = @_;
-  syslog( "err|log", $format, @args );
+  syslog( "err|local0", $format, @args );
   return ();
 }
 
