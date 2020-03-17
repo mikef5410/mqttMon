@@ -23,6 +23,7 @@ use JSON;
 use Data::Dumper qw(Dumper);
 use Config::Simple;
 use Net::Pushover;
+use feature 'state';
 
 #use WWW::PushBullet;
 use Net::SMTP;
@@ -62,7 +63,8 @@ my $currLightState            = 0;
 if (DAEMON) {
   daemonize();
 }
-my $gridNotifications = [ '7077999733@msg.fi.google.com', '7077999734@msg.fi.google.com', '7075375852@msg.fi.google.com' ];
+my $gridNotifications =
+  [ '7077999733@msg.fi.google.com', '7077999734@msg.fi.google.com', '7075375852@msg.fi.google.com' ];
 openlog( "mqttMon", "", "local0" );
 Info("mqttMon started.");
 Info("mqtt server: $mqttServer, Run as: $runas");
@@ -129,16 +131,19 @@ sub energyhandler {
   my $topic = shift;
   my $val   = shift;
 
+  my $gridup = 1;
 SW: {
     if ( $topic eq "gates5410/energy/grid/up" ) {
-      if ( $val eq "true" ) {
+      debounce ( \$gridup, ($val eq "true")? 1: 0 );
+      if ( $gridup == 1 ) {
         if ( $currLightState == 1 ) {
           light_off();
           $currLightState = 0;
           notify( "PG&E Grid Restored", "Grid is restored", "", 300, $gridNotifications );
           $lastGridStateNotification = 0;
         }
-      } else {
+      }
+      if ( $gridup == 0 ) {
         if ( ( time - $lastGridStateNotification ) > ( 6 * 60 * 60 ) ) {    #every 6 hrs, re-notify
           $lastGridStateNotification = time;
           $currLightState            = 0;
@@ -153,6 +158,21 @@ SW: {
       # $val could be STANDBY CHARGE DISCHARGE VOLUNTARY_DISCHARGE
     }
   }
+}
+
+sub debounce {
+  my $varref = shift;
+  my $val    = shift;
+
+  my $n = 4;
+  if ($val==1) {
+    $$varref += (1 / $n);
+  } else {
+    $$varref -= (1 / $n);
+  }
+  $$varref = ($$varref <= 0) ? 0 : $$varref;
+  $$varref = ($$varref >= 1) ? 1 : $$varref;
+  return;
 }
 
 # Fork, exec, drop privs and setpgrp to become a daemon. This program is meant to start life
