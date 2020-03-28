@@ -131,7 +131,7 @@ sub energyhandler {
   my $topic = shift;
   my $val   = shift;
 
-  my $gridup = 1;
+  state $gridup = 1;
 SW: {
     if ( $topic eq "gates5410/energy/grid/up" ) {
       debounce ( \$gridup, ($val eq "true")? 1: 0 );
