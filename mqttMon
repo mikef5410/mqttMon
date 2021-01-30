@@ -41,6 +41,9 @@ use constant GRN        => "G";
 my $globalConfig = "/etc/mqttMon.conf";
 my $pidfile      = "/var/run/mqttMon/mqttMon.pid";
 
+die "Sorry, you need Net::MQTT:Simple::Auth version 0.003 (gihub mikef5410)\n"
+  unless $Net::MQTT::Simple::Auth::VERSION == 0.003;
+
 #my $stacklightSem = "/tmp/stacklight";
 my $cfg;
 if ( -f $globalConfig ) {
