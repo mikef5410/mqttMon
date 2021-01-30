@@ -79,7 +79,8 @@ if ( length($user) && length($pass) ) {
 
 # Define the topics to monitor and how to handle them...
 my @subs = (    #"octoprint/#" => \&octohandler,
-  "gates5410/energy/#" => \&energyhandler
+		#  "gates5410/energy/#" => \&energyhandler
+		  "gates5410/energy/grid/up" => \&energyhandler
 );
 
 # Subscribe and run
